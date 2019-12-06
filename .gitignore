@@ -1,0 +1,9 @@
+nytimes_news_articles.txt
+cornell_movie_quotes_corpus/
+bbc-fulltext
+rawtext.txt
+resultsOn1000Sentences.txt
+resultsOn1000SentencesAllTokens.txt
+.idea/
+env
+*.ini
