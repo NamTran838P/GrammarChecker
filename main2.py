@@ -5,13 +5,16 @@ import keras.utils as utils
 from keras.models import Sequential
 import keras.layers
 import numpy as np
+import os
 import tensorflow as tf
 
-NUM_SENTENCES = 1000
+NUM_SENTENCES = 100
 
 REMOVABLE_TOKENS = ['the', '\'ve', '\'m', '\'s', '\'d', '\'ll']
+GLOVE_DIR = 'C:/Users/phili/GrammarChecker/glove.6B.100d'
+# GLOVE_DIR = '/home/pcori/GrammarChecker/glove.6B.100d'
 
-# REMOVABLE_TOKENS = ['the', '\'s']
+EMBEDDING_DIM = 100
 
 def main():
     # print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
@@ -20,64 +23,71 @@ def main():
     text = open(rawDataFile, 'r').read()
     sentences = text.split('\n')
     trainSentences = sentences[:NUM_SENTENCES]
-    testSentences = sentences[NUM_SENTENCES:NUM_SENTENCES + int(NUM_SENTENCES * 0.2)]
+    testSentences = sentences[NUM_SENTENCES:NUM_SENTENCES + int(NUM_SENTENCES * 1.2)]
 
     train_incorrectSentences, train_trueSentences = getIncorrectSentences(trainSentences, 300)
     test_incorrectSentences, test_trueSentences = getIncorrectSentences(testSentences, 300)
 
-    tokenizer = Tokenizer()
+    tokenizer = Tokenizer(filters='')
     tokenizer.fit_on_texts(np.concatenate((trainSentences, testSentences)))
+
+    embeddingMatrix = getEmbeddingMatrix(tokenizer.word_index)
+
     trainEncoded = tokenizer.texts_to_sequences(trainSentences)
     training_trueSentencesEncoded = tokenizer.texts_to_sequences(train_trueSentences)
     test_trueSentencesEncoded = tokenizer.texts_to_sequences(test_trueSentences)
     vocab_size = len(tokenizer.word_index) + 1
     print('vocab size: ' + str(vocab_size))
 
+    print('preparing sequences...')
     maxLength = max([len(x) for x in np.concatenate((trainEncoded, training_trueSentencesEncoded))])
     x_train, y_train = prepareSequences(trainEncoded, maxLength)
     x_test, y_test = prepareSequences(training_trueSentencesEncoded, maxLength)
     y_train = utils.to_categorical(y_train, num_classes=vocab_size)
     y_test = utils.to_categorical(y_test, num_classes=vocab_size)
+    # y_train = [embeddingMatrix[seqVal] for seqVal in y_train]
+    # y_test = [embeddingMatrix[seqVal] for seqVal in y_test]
 
     model = Sequential()
-    model.add(keras.layers.Embedding(vocab_size, 10, input_length=maxLength - 1))
-    model.add(keras.layers.LSTM(50))
-    model.add(keras.layers.Dropout(0.2))
+    model.add(keras.layers.Embedding(vocab_size, EMBEDDING_DIM, weights=[embeddingMatrix], input_length=maxLength - 1, trainable=False))
+    # model.add(keras.layers.Embedding(vocab_size, 10, input_length=maxLength - 1))
+    model.add(keras.layers.GRU(50))
+    # model.add(keras.layers.Dropout(0.2))
     model.add(keras.layers.Dense(vocab_size, activation='softmax'))
 
     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
     model.fit(x_train, y_train, epochs=300, verbose=2)
-    loss, accuracy = model.evaluate(x_train, y_train, verbose=1)
-    print('training loss: ' + str(loss) + ', accuracy: ' + str(accuracy))
-    loss, accuracy = model.evaluate(x_test, y_test, verbose=1)
-    print('test loss: ' + str(loss) + ', accuracy: ' + str(accuracy))
 
     # evaluate
-    vocab = tokenizer.word_index
-    vocab_inv = {v: k for k, v in vocab.items()}
+    # vocab = tokenizer.word_index
+    # vocab_inv = {v: k for k, v in vocab.items()}
 
     training_correctedSentences = processSentences(train_incorrectSentences, model, tokenizer, maxLength)
 
-    print('train data results:')
-    for i in range(len(training_correctedSentences)):
-        print('orig: ' + train_incorrectSentences[i])
-        print('pred: ' + decodeSentence(training_correctedSentences[i], vocab_inv))
-        print('true: ' + decodeSentence(training_trueSentencesEncoded[i], vocab_inv))
+    # print('train data results:')
+    # for i in range(len(training_correctedSentences)):
+    #     print('orig: ' + train_incorrectSentences[i])
+    #     print('pred: ' + decodeSentence(training_correctedSentences[i], vocab_inv))
+    #     print('true: ' + decodeSentence(training_trueSentencesEncoded[i], vocab_inv))
 
 
     test_correctedSentences = processSentences(test_incorrectSentences, model, tokenizer, maxLength)
 
-    print('test data results:')
-    for i in range(len(test_correctedSentences)):
-        print('orig: ' + test_incorrectSentences[i])
-        print('pred: ' + decodeSentence(test_correctedSentences[i], vocab_inv))
-        print('true: ' + decodeSentence(test_trueSentencesEncoded[i], vocab_inv))
+    # print('test data results:')
+    # for i in range(len(test_correctedSentences)):
+    #     print('orig: ' + test_incorrectSentences[i])
+    #     print('pred: ' + decodeSentence(test_correctedSentences[i], vocab_inv))
+    #     print('true: ' + decodeSentence(test_trueSentencesEncoded[i], vocab_inv))
 
+    baseline_correctedSentences = getRandomCorrections(train_incorrectSentences, tokenizer)
+
+    loss, accuracy = model.evaluate(x_train, y_train, verbose=1)
+    print('training loss: ' + str(loss) + ', accuracy: ' + str(accuracy))
+    loss, accuracy = model.evaluate(x_test, y_test, verbose=1)
+    print('test loss: ' + str(loss) + ', accuracy: ' + str(accuracy))
+    print('baseline accuracy: ' + str(getAccuracy(baseline_correctedSentences, training_trueSentencesEncoded)))
     print('train accuracy: ' + str(getAccuracy(training_correctedSentences, training_trueSentencesEncoded)))
     print('test accuracy: ' + str(getAccuracy(test_correctedSentences, test_trueSentencesEncoded)))
-
-
-    # print(getAccuracy(correctedSentences, tokenizer.texts_to_sequences(['he \'ll never get it right . try the log ride !'])))
 
     # testText = 'do n\'t eat at the console .'
     # testEncoded = tokenizer.texts_to_sequences(incorrectSentences)
@@ -144,6 +154,17 @@ def processSentences(sentences, model, tokenizer, maxLength):
         correctedSentences.append(bestEncoding)
     return correctedSentences
 
+def getRandomCorrections(sentences, tokenizer):
+    correctedSentences = []
+    for i, sentence in enumerate(sentences):
+        encoded = tokenizer.texts_to_sequences([sentence])[0]
+        randPos = np.random.randint(0, len(encoded) - 1) if (len(encoded) > 1) else 0
+        randTok = REMOVABLE_TOKENS[np.random.randint(0, len(REMOVABLE_TOKENS) - 1)]
+        encoded.insert(randPos, randTok)
+        correctedSentences.append(encoded)
+    return correctedSentences
+
+
 def decodeSentence(tokens, vocab):
     return ' '.join([vocab[token] for token in tokens])
 
@@ -181,6 +202,21 @@ def getIncorrectSentences(sentences, num_sentences=None):
             break
     return x, y
 
-
+def getEmbeddingMatrix(word_index):
+    embeddings_index = {}
+    f = open(os.path.join(GLOVE_DIR, 'glove.6B.100d.txt'), encoding="utf-8")
+    for line in f:
+        values = line.split()
+        word = values[0]
+        coefs = np.asarray(values[1:], dtype='float32')
+        embeddings_index[word] = coefs
+    f.close()
+    embedding_matrix = np.zeros((len(word_index) + 1, EMBEDDING_DIM))
+    for word, i in word_index.items():
+        embedding_vector = embeddings_index.get(word)
+        if embedding_vector is not None:
+            # words not found in embedding index will be all-zeros.
+            embedding_matrix[i] = embedding_vector
+    return embedding_matrix
 if __name__ == '__main__':
     main()
